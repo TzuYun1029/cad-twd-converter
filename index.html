@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>CAD → TWD 換算（含/不含稅）</title>
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <style>
+    :root { --gap: 14px; --radius: 14px; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, "PingFang TC", "Noto Sans TC", sans-serif; 
+           margin: 0; padding: 24px; background: #f7f7f9; color: #111; }
+    .card { background: #fff; border-radius: var(--radius); padding: 18px; box-shadow: 0 12px 24px rgba(0,0,0,.06); }
+    h1 { font-size: 20px; margin: 0 0 10px; }
+    .row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; }
+    .field { display: grid; gap: 8px; margin-top: var(--gap); }
+    input[type="number"] { width: 100%; font-size: 18px; padding: 14px 12px; border: 1px solid #ddd; border-radius: 12px; 
+                           -webkit-appearance: none; appearance: textfield; background: #fff; }
+    input[type="number"]::-webkit-outer-spin-button,
+    input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ddd; background: #fff; font-size: 15px; cursor: pointer; }
+    button:active { transform: scale(0.98); }
+    button:hover { background: #f5f5f5; }
+    .muted { color: #666; font-size: 13px; }
+    .big { font-size: 22px; font-weight: 700; }
+    .grid { display: grid; gap: 10px; margin-top: var(--gap); }
+    .item { display: grid; gap: 4px; background: #fafafa; border: 1px solid #eee; border-radius: 12px; padding: 12px; }
+    .label { font-size: 13px; color: #555; }
+    .value { font-size: 20px; font-weight: 700; }
+    .ok { color: #0a7; }
+    .warn { color: #d33; }
+    .api-status { margin-top: 10px; padding: 8px; border-radius: 8px; font-size: 12px; }
+    .api-status.success { background: #e8f5e8; color: #0a7; }
+    .api-status.error { background: #ffeaea; color: #d33; }
+    footer { margin-top: 18px; color: #666; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>加幣 → 台幣 小工具</h1>
+    <div class="field">
+      <label for="cad">輸入加幣金額（CAD）</label>
+      <input id="cad" type="number" inputmode="decimal" step="0.01" placeholder="例如 12.99" />
+    </div>
+
+    <div class="row" style="margin-top: 10px;">
+      <div id="rateLine" class="muted">正在取得今日匯率…</div>
+      <button id="refreshBtn" type="button" aria-label="重新整理匯率">重新整理</button>
+    </div>
+
+    <div id="apiStatus" class="api-status" style="display: none;"></div>
+
+    <div class="grid">
+      <div class="item">
+        <div class="label">1. 今日匯率（1 CAD = ? TWD）</div>
+        <div id="rate" class="value">—</div>
+      </div>
+      <div class="item">
+        <div class="label">2. 含稅 13% 後折合台幣</div>
+        <div id="withTax" class="value">—</div>
+      </div>
+      <div class="item">
+        <div class="label">3. 不含稅折合台幣</div>
+        <div id="withoutTax" class="value">—</div>
+      </div>
+    </div>
+
+    <footer>
+      匯率來源：多重備援 API（ExchangeRate.host、ExchangeRate-API、Currency API）。實際消費以刷卡/銀行入帳匯率為準。
+    </footer>
+  </div>
+
+  <script>
+    // 格式化工具
+    const fmtCAD = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' });
+    const fmtTWD = new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', maximumFractionDigits: 0 });
+    const fmtRate = new Intl.NumberFormat('zh-TW', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+
+    const HST = 0.13;  // 13%
+
+    const cadInput = document.getElementById('cad');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const rateEl = document.getElementById('rate');
+    const withTaxEl = document.getElementById('withTax');
+    const withoutTaxEl = document.getElementById('withoutTax');
+    const rateLine = document.getElementById('rateLine');
+    const apiStatus = document.getElementById('apiStatus');
+
+    let rate = null; // CAD→TWD
+    let currentApiSource = '';
+
+    // 多個 API 備援
+    const apiSources = [
+      {
+        name: 'ExchangeRate.host',
+        url: 'https://api.exchangerate.host/latest?from=CAD&to=TWD',
+        parseResponse: (data) => ({ rate: data.rates?.TWD, date: data.date })
+      },
+      {
+        name: 'ExchangeRate-API',
+        url: 'https://api.exchangerate-api.com/v4/latest/CAD',
+        parseResponse: (data) => ({ rate: data.rates?.TWD, date: data.date })
+      },
+      {
+        name: 'Currency API (CDN)',
+        url: 'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/cad.json',
+        parseResponse: (data) => ({ rate: data.cad?.twd, date: data.date })
+      }
+    ];
+
+    async function fetchRate() {
+      rateLine.textContent = '正在取得今日匯率…';
+      rateEl.textContent = '—';
+      apiStatus.style.display = 'none';
+      
+      for (const api of apiSources) {
+        try {
+          console.log(`嘗試 ${api.name}...`);
+          const res = await fetch(api.url, { 
+            cache: 'no-store',
+            headers: {
+              'Accept': 'application/json',
+            }
+          });
+          
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+          }
+          
+          const data = await res.json();
+          const parsed = api.parseResponse(data);
+          
+          if (typeof parsed.rate !== 'number' || parsed.rate <= 0) {
+            throw new Error('無效的匯率數據');
+          }
+
+          rate = parsed.rate;
+          currentApiSource = api.name;
+          
+          rateEl.textContent = `1 CAD = ${fmtRate.format(rate)} TWD`;
+          
+          const now = new Date();
+          const dateInfo = parsed.date ? `（${parsed.date}）` : '';
+          rateLine.textContent = `資料來源：${api.name} ${dateInfo}`;
+          
+          // 顯示成功狀態
+          apiStatus.textContent = `✓ 成功連接至 ${api.name}`;
+          apiStatus.className = 'api-status success';
+          apiStatus.style.display = 'block';
+          
+          compute();
+          return; // 成功後跳出循環
+          
+        } catch (err) {
+          console.warn(`${api.name} 失敗:`, err.message);
+          continue; // 嘗試下一個 API
+        }
+      }
+      
+      // 所有 API 都失敗
+      rateLine.textContent = '⚠️ 所有匯率來源均無法連接，請檢查網絡或稍後再試';
+      apiStatus.textContent = '✗ 無法連接到任何匯率 API，請稍後重試';
+      apiStatus.className = 'api-status error';
+      apiStatus.style.display = 'block';
+    }
+
+    function compute() {
+      const cad = parseFloat(cadInput.value);
+      if (!rate || isNaN(cad)) {
+        withTaxEl.textContent = '—';
+        withoutTaxEl.textContent = '—';
+        return;
+      }
+      const twdNoTax = cad * rate;
+      const twdWithTax = cad * (1 + HST) * rate;
+
+      withoutTaxEl.textContent = fmtTWD.format(twdNoTax);
+      withTaxEl.textContent = fmtTWD.format(twdWithTax);
+    }
+
+    cadInput.addEventListener('input', compute);
+    refreshBtn.addEventListener('click', fetchRate);
+
+    // iOS 鍵盤小提示
+    cadInput.addEventListener('focus', () => { 
+      if (!cadInput.value) cadInput.placeholder = '0.00'; 
+    });
+
+    // 初次載入
+    fetchRate();
+  </script>
+</body>
+</html>
