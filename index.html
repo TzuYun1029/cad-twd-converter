@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>CAD → TWD 換算（含/不含稅）</title>
+  <title>CAD → TWD Converter (With/Without Tax)</title>
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <style>
     :root { --gap: 14px; --radius: 14px; }
@@ -36,44 +36,37 @@
 </head>
 <body>
   <div class="card">
-    <h1>加幣 → 台幣 小工具</h1>
+    <h1>CAD → TWD Converter</h1>
     <div class="field">
-      <label for="cad">輸入加幣金額（CAD）</label>
-      <input id="cad" type="number" inputmode="decimal" step="0.01" placeholder="例如 12.99" />
+      <input id="cad" type="number" inputmode="decimal" step="0.01" placeholder="Enter CAD amount (e.g. 12.99)" />
     </div>
-
-    <div class="row" style="margin-top: 10px;">
-      <div id="rateLine" class="muted">正在取得今日匯率…</div>
-      <button id="refreshBtn" type="button" aria-label="重新整理匯率">重新整理</button>
-    </div>
-
-    <div id="apiStatus" class="api-status" style="display: none;"></div>
-
+    
     <div class="grid">
       <div class="item">
-        <div class="label">1. 今日匯率（1 CAD = ? TWD）</div>
-        <div id="rate" class="value">—</div>
-      </div>
-      <div class="item">
-        <div class="label">2. 含稅 13% 後折合台幣</div>
+        <div class="label">With 13% Tax (TWD)</div>
         <div id="withTax" class="value">—</div>
       </div>
       <div class="item">
-        <div class="label">3. 不含稅折合台幣</div>
+        <div class="label">Without Tax (TWD)</div>
         <div id="withoutTax" class="value">—</div>
       </div>
+      <div id="apiStatus" class="api-status" style="display: none;"></div>
+      <div class="item">
+        <div class="label">Today's Rate</div>
+        <div id="rate" class="value">—</div>
+      </div>
     </div>
-
-    <footer>
-      匯率來源：多重備援 API（ExchangeRate.host、ExchangeRate-API、Currency API）。實際消費以刷卡/銀行入帳匯率為準。
-    </footer>
   </div>
-
+  <div class="row" style="margin-top: 10px;">
+    <div id="rateLine" class="muted">Fetching today's exchange rate...</div>
+    <button id="refreshBtn" type="button" aria-label="Refresh exchange rate">Refresh</button>
+  </div>
+  
   <script>
-    // 格式化工具
+    // Formatting tools
     const fmtCAD = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' });
-    const fmtTWD = new Intl.NumberFormat('zh-TW', { style: 'currency', currency: 'TWD', maximumFractionDigits: 0 });
-    const fmtRate = new Intl.NumberFormat('zh-TW', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
+    const fmtTWD = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'TWD', maximumFractionDigits: 0 });
+    const fmtRate = new Intl.NumberFormat('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 6 });
 
     const HST = 0.13;  // 13%
 
@@ -88,7 +81,7 @@
     let rate = null; // CAD→TWD
     let currentApiSource = '';
 
-    // 多個 API 備援
+    // Multiple API fallbacks
     const apiSources = [
       {
         name: 'ExchangeRate.host',
@@ -108,13 +101,13 @@
     ];
 
     async function fetchRate() {
-      rateLine.textContent = '正在取得今日匯率…';
+      rateLine.textContent = 'Fetching today\'s exchange rate...';
       rateEl.textContent = '—';
       apiStatus.style.display = 'none';
       
       for (const api of apiSources) {
         try {
-          console.log(`嘗試 ${api.name}...`);
+          console.log(`Trying ${api.name}...`);
           const res = await fetch(api.url, { 
             cache: 'no-store',
             headers: {
@@ -130,7 +123,7 @@
           const parsed = api.parseResponse(data);
           
           if (typeof parsed.rate !== 'number' || parsed.rate <= 0) {
-            throw new Error('無效的匯率數據');
+            throw new Error('Invalid exchange rate data');
           }
 
           rate = parsed.rate;
@@ -139,26 +132,26 @@
           rateEl.textContent = `1 CAD = ${fmtRate.format(rate)} TWD`;
           
           const now = new Date();
-          const dateInfo = parsed.date ? `（${parsed.date}）` : '';
-          rateLine.textContent = `資料來源：${api.name} ${dateInfo}`;
+          const dateInfo = parsed.date ? `(${parsed.date})` : '';
+          rateLine.textContent = `Data source: ${api.name} ${dateInfo}`;
           
-          // 顯示成功狀態
-          apiStatus.textContent = `✓ 成功連接至 ${api.name}`;
+          // Show success status
+          apiStatus.textContent = `✓ Successfully connected to ${api.name}`;
           apiStatus.className = 'api-status success';
           apiStatus.style.display = 'block';
           
           compute();
-          return; // 成功後跳出循環
+          return; // Exit loop on success
           
         } catch (err) {
-          console.warn(`${api.name} 失敗:`, err.message);
-          continue; // 嘗試下一個 API
+          console.warn(`${api.name} failed:`, err.message);
+          continue; // Try next API
         }
       }
       
-      // 所有 API 都失敗
-      rateLine.textContent = '⚠️ 所有匯率來源均無法連接，請檢查網絡或稍後再試';
-      apiStatus.textContent = '✗ 無法連接到任何匯率 API，請稍後重試';
+      // All APIs failed
+      rateLine.textContent = '⚠️ All exchange rate sources unavailable, please check network or try again later';
+      apiStatus.textContent = '✗ Unable to connect to any exchange rate API, please try again later';
       apiStatus.className = 'api-status error';
       apiStatus.style.display = 'block';
     }
@@ -180,12 +173,12 @@
     cadInput.addEventListener('input', compute);
     refreshBtn.addEventListener('click', fetchRate);
 
-    // iOS 鍵盤小提示
+    // iOS keyboard hint
     cadInput.addEventListener('focus', () => { 
       if (!cadInput.value) cadInput.placeholder = '0.00'; 
     });
 
-    // 初次載入
+    // Initial load
     fetchRate();
   </script>
 </body>
